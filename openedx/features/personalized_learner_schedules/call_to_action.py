@@ -1,11 +1,15 @@
 import logging
+import six
 
 from crum import get_current_request
+from openedx.core.lib.mobile_utils import is_request_from_mobile_app
+
+from django.conf import settings
 from django.urls import reverse
 from django.utils.translation import gettext as _
 
-from lms.djangoapps.course_home_api.utils import is_request_from_learning_mfe
-from openedx.core.lib.mobile_utils import is_request_from_mobile_app
+from lms.djangoapps.course_home_api.toggles import course_home_mfe_dates_tab_is_active
+from lms.djangoapps.course_home_api.utils import get_microfrontend_url, is_request_from_learning_mfe
 
 log = logging.getLogger(__name__)
 
@@ -96,13 +100,43 @@ class PersonalizedLearnerScheduleCallToAction:
     @staticmethod
     def _make_reset_deadlines_cta(xblock):
         from lms.urls import RESET_COURSE_DEADLINES_NAME
-        return {
+        request = get_current_request()
+        is_learning_mfe = request and is_request_from_learning_mfe(request)
+        course_key = xblock.scope_ids.usage_id.context_key
+
+        cta_data = {
             'link': reverse(RESET_COURSE_DEADLINES_NAME),
             'link_name': _('Shift due dates'),
             'form_values': {
-                'course_id': xblock.scope_ids.usage_id.context_key,
+                'course_id': course_key,
             },
             'description': _('To participate in this assignment, the suggested schedule for your course needs '
                              'updating. Don’t worry, we’ll shift all the due dates for you and you won’t lose '
                              'any of your progress.'),
+
         }
+
+        if is_learning_mfe:
+            if course_home_mfe_dates_tab_is_active(course_key):
+                body_link = get_microfrontend_url(course_key=course_key, view_name='dates')
+            else:
+                body_link = '{}{}'.format(settings.LMS_ROOT_URL, reverse('dates', args=[six.text_type(course_key)]))
+
+            cta_data['event_data'] = {
+                'body': {
+                    'text': _('View all dates'),
+                    'link': body_link,
+                },
+                'event_name': 'post_event',
+                'header': {
+                    'text': _('Your due dates have been successfully shifted to help you stay on track.'),
+                },
+                'post_data':  {
+                    'body_params': {
+                        'course_id': str(course_key),
+                    },
+                    'url': '{}{}'.format(settings.LMS_ROOT_URL, reverse('course-experience-reset-course-deadlines')),
+                },
+            }
+
+        return cta_data
